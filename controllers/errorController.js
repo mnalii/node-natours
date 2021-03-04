@@ -19,34 +19,69 @@ const handleValidationErrorDB = (err) => {
   return new AppError(message, 400);
 };
 
-const sendErrorDev = (err, res) => {
-  res.status(err.statusCode).json({
-    status: err.status,
-    error: err,
-    message: err.message,
-    stack: err.stack
-  });
-};
-
-const sendErrorProd = (err, res) => {
-  // Operational, trusted error: send message to the client
-  if (err.isOperational) {
+const sendErrorDev = (err, req, res) => {
+  // API
+  if (req.originalUrl.startsWith('/api')) {
     res.status(err.statusCode).json({
       status: err.status,
-      message: err.message
+      error: err,
+      message: err.message,
+      stack: err.stack
     });
-    // Programming or other unknown error
   } else {
+    // RENDERED website
+    res.status(err.statusCode).render('error', {
+      title: 'Something went wrong!',
+      msg: err.message
+    });
+  }
+};
+
+// Error handling for invalid JWT
+const handleJWTError = () =>
+  new AppError('Invalid token. Please log in again!', 401);
+
+const handleJWTEpiredError = () =>
+  new AppError('The token has been expired. Please log in again!', 401);
+
+const sendErrorProd = (err, req, res) => {
+  // API
+  if (req.originalUrl.startsWith('/api')) {
+    // Operational, trusted error: send message to the client
+    if (err.isOperational) {
+      console.log(err);
+      return res.status(err.statusCode).json({
+        status: err.status,
+        message: err.message
+      });
+      // Programming or other unknown error
+    }
     // 1) Log error
     // eslint-disable-next-line no-console
-    console.error('ERROR', err);
+    console.error(err);
 
     // 2) Set generic message
-    res.status(500).json({
+    return res.status(500).json({
       status: 'error',
       message: 'Something went very wrong'
     });
   }
+  if (err.isOperational) {
+    return res.status(err.statusCode).render('error', {
+      title: 'Something went wrong!',
+      msg: err.message
+    });
+  }
+  // 1) Log error
+  // eslint-disable-next-line no-console
+  console.error(err);
+  // Programming or other unknown error
+
+  // 2) Set generic message
+  return res.status(err.statusCode).render('error', {
+    title: 'Something went wrong',
+    msg: 'Please try again later'
+  });
 };
 
 module.exports = (err, req, res, next) => {
@@ -54,9 +89,10 @@ module.exports = (err, req, res, next) => {
   err.status = err.status || 'error';
 
   if (process.env.NODE_ENV === 'development') {
-    sendErrorDev(err, res);
+    sendErrorDev(err, req, res);
   } else if (process.env.NODE_ENV === 'production') {
     // let error = { ...err };
+    console.log(err);
     let error = Object.create(err);
     if (error.name === 'CastError') error = handleCastErrorDB(error);
     if (error.code === 11000) error = handleDuplicateFieldsDB(error);
@@ -64,6 +100,9 @@ module.exports = (err, req, res, next) => {
     if (error.name === 'ValidationError')
       error = handleValidationErrorDB(error);
 
-    sendErrorProd(error, res);
+    if (error.name === 'JsonWebTokenError') error = handleJWTError();
+    if (error.name === 'TokenExpiredError') error = handleJWTEpiredError();
+
+    sendErrorProd(error, req, res);
   }
 };
